@@ -34,6 +34,9 @@
  * thinking settings.
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type {
 	Api,
 	AssistantMessageEventStream,
@@ -206,278 +209,102 @@ const VISION_MODELS = new Set([
 	MINIMAX_M3_MODEL_ID,
 ]);
 
-// Embedding / non-chat models to skip
-const SKIP_MODELS = new Set([
-	"baai/bge-m3",
-	"nvidia/embed-qa-4",
-	"nvidia/nv-embed-v1",
-	"nvidia/nv-embedcode-7b-v1",
-	"nvidia/nv-embedqa-e5-v5",
-	"nvidia/nv-embedqa-mistral-7b-v2",
-	"nvidia/nvclip",
-	"nvidia/streampetr",
-	"nvidia/vila",
-	"nvidia/neva-22b",
-	"nvidia/nemoretriever-parse",
-	"nvidia/nemotron-parse",
-	"nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
-	"nvidia/llama-3.2-nemoretriever-300m-embed-v1",
-	"nvidia/llama-3.2-nemoretriever-300m-embed-v2",
-	"nvidia/llama-3.2-nv-embedqa-1b-v1",
-	"nvidia/llama-3.2-nv-embedqa-1b-v2",
-	"nvidia/llama-nemotron-embed-vl-1b-v2",
-	"nvidia/llama-3.1-nemotron-70b-reward",
-	"nvidia/nemotron-4-340b-reward",
-	"nvidia/nemotron-content-safety-reasoning-4b",
-	"nvidia/llama-3.1-nemoguard-8b-content-safety",
-	"nvidia/llama-3.1-nemoguard-8b-topic-control",
-	"nvidia/llama-3.1-nemotron-safety-guard-8b-v3",
-	"meta/llama-guard-4-12b",
-	"nvidia/riva-translate-4b-instruct",
-	"nvidia/riva-translate-4b-instruct-v1.1",
-	"google/deplot",
-	"google/paligemma",
-	"google/recurrentgemma-2b",
-	"google/shieldgemma-9b",
-	"microsoft/kosmos-2",
-	"adept/fuyu-8b",
-	"bigcode/starcoder2-15b",
-	"bigcode/starcoder2-7b",
-	"snowflake/arctic-embed-l",
-	"mistralai/mamba-codestral-7b-v0.1",
-	"mistralai/mathstral-7b-v0.1",
-	"mistralai/mixtral-8x22b-v0.1",
-	"nvidia/mistral-nemo-minitron-8b-base",
-	"google/gemma-2b",
-	"google/gemma-7b",
-	"google/codegemma-7b",
-	"meta/llama2-70b",
-]);
 
-// Known context windows (tokens)
-const CONTEXT_WINDOWS: Record<string, number> = {
-	// DeepSeek
-	"deepseek-ai/deepseek-v3.1": 131072,
-	"deepseek-ai/deepseek-v3.1-terminus": 131072,
-	"deepseek-ai/deepseek-v3.2": 131072,
-	"deepseek-ai/deepseek-v4-flash": 1048576,
-	"deepseek-ai/deepseek-v4-pro": 1048576,
-	"deepseek-ai/deepseek-r1-distill-llama-8b": 131072,
-	"deepseek-ai/deepseek-r1-distill-qwen-14b": 131072,
-	"deepseek-ai/deepseek-r1-distill-qwen-32b": 131072,
-	"deepseek-ai/deepseek-r1-distill-qwen-7b": 131072,
-	"deepseek-ai/deepseek-coder-6.7b-instruct": 16384,
-	// Kimi / Moonshot
-	"moonshotai/kimi-k2-instruct": 131072,
-	"moonshotai/kimi-k2-instruct-0905": 131072,
-	"moonshotai/kimi-k2-thinking": 131072,
-	"moonshotai/kimi-k2.6": 262144,
-	// MiniMax
-	"minimaxai/minimax-m2": 1048576,
-	"minimaxai/minimax-m2.1": 1048576,
-	"minimaxai/minimax-m2.7": 204800,
-	[MINIMAX_M3_MODEL_ID]: 1_048_576,
-	// Meta Llama
-	"meta/llama-3.1-405b-instruct": 131072,
-	"meta/llama-3.1-70b-instruct": 131072,
-	"meta/llama-3.1-8b-instruct": 131072,
-	"meta/llama-3.2-11b-vision-instruct": 131072,
-	"meta/llama-3.2-1b-instruct": 131072,
-	"meta/llama-3.2-3b-instruct": 131072,
-	"meta/llama-3.2-90b-vision-instruct": 131072,
-	"meta/llama-3.3-70b-instruct": 131072,
-	"meta/llama-4-maverick-17b-128e-instruct": 1048576,
-	"meta/llama-4-scout-17b-16e-instruct": 524288,
-	"meta/llama3-70b-instruct": 8192,
-	"meta/llama3-8b-instruct": 8192,
-	// Mistral
-	"mistralai/mistral-large-3-675b-instruct-2512": 131072,
-	"mistralai/mistral-medium-3-instruct": 131072,
-	"mistralai/devstral-2-123b-instruct-2512": 131072,
-	"mistralai/magistral-small-2506": 131072,
-	"mistralai/mistral-large": 131072,
-	"mistralai/mistral-large-2-instruct": 131072,
-	"mistralai/mistral-small-24b-instruct": 32768,
-	"mistralai/mistral-small-3.1-24b-instruct-2503": 131072,
-	"mistralai/mistral-nemotron": 131072,
-	"mistralai/mixtral-8x22b-instruct-v0.1": 65536,
-	"mistralai/mixtral-8x7b-instruct-v0.1": 32768,
-	"mistralai/codestral-22b-instruct-v0.1": 32768,
-	"mistralai/ministral-14b-instruct-2512": 131072,
-	// Microsoft Phi
-	"microsoft/phi-3-medium-128k-instruct": 131072,
-	"microsoft/phi-3-mini-128k-instruct": 131072,
-	"microsoft/phi-3-small-128k-instruct": 131072,
-	"microsoft/phi-3-medium-4k-instruct": 4096,
-	"microsoft/phi-3-mini-4k-instruct": 4096,
-	"microsoft/phi-3-small-8k-instruct": 8192,
-	"microsoft/phi-3-vision-128k-instruct": 131072,
-	"microsoft/phi-3.5-mini-instruct": 131072,
-	"microsoft/phi-3.5-moe-instruct": 131072,
-	"microsoft/phi-3.5-vision-instruct": 131072,
-	"microsoft/phi-4-mini-instruct": 131072,
-	"microsoft/phi-4-mini-flash-reasoning": 131072,
-	"microsoft/phi-4-multimodal-instruct": 131072,
-	// Qwen
-	"qwen/qwen2-7b-instruct": 131072,
-	"qwen/qwen2.5-7b-instruct": 131072,
-	"qwen/qwen2.5-coder-32b-instruct": 131072,
-	"qwen/qwen2.5-coder-7b-instruct": 131072,
-	"qwen/qwen3-235b-a22b": 131072,
-	"qwen/qwen3-coder-480b-a35b-instruct": 262144,
-	"qwen/qwen3-next-80b-a3b-instruct": 131072,
-	"qwen/qwen3-next-80b-a3b-thinking": 131072,
-	"qwen/qwq-32b": 131072,
-	// Google Gemma
-	"google/gemma-2-27b-it": 8192,
-	"google/gemma-2-2b-it": 8192,
-	"google/gemma-2-9b-it": 8192,
-	"google/gemma-3-12b-it": 131072,
-	"google/gemma-3-1b-it": 32768,
-	"google/gemma-3-27b-it": 131072,
-	"google/gemma-3-4b-it": 131072,
-	"google/gemma-3n-e2b-it": 131072,
-	"google/gemma-3n-e4b-it": 131072,
-	"google/codegemma-1.1-7b": 8192,
-	// NVIDIA
-	"nvidia/llama-3.1-nemotron-ultra-253b-v1": 131072,
-	"nvidia/llama-3.1-nemotron-70b-instruct": 131072,
-	"nvidia/llama-3.1-nemotron-51b-instruct": 131072,
-	"nvidia/llama-3.3-nemotron-super-49b-v1": 131072,
-	"nvidia/llama-3.3-nemotron-super-49b-v1.5": 131072,
-	"nvidia/nemotron-4-340b-instruct": 4096,
-	"nvidia/nvidia-nemotron-nano-9b-v2": 131072,
-	// Thinking Machines
-	[INKLING_MODEL_ID]: 1_048_576,
-	// OpenAI open-source
-	"openai/gpt-oss-120b": 131072,
-	"openai/gpt-oss-20b": 131072,
-	// Z-AI / GLM
-	"z-ai/glm4.7": 131072,
-	"z-ai/glm5": 131072,
-	// StepFun
-	"stepfun-ai/step-3.5-flash": 131072,
-	// ByteDance
-	"bytedance/seed-oss-36b-instruct": 131072,
-	// IBM Granite
-	"ibm/granite-3.3-8b-instruct": 131072,
-	"ibm/granite-3.0-8b-instruct": 8192,
-	"ibm/granite-3.0-3b-a800m-instruct": 8192,
-	"ibm/granite-34b-code-instruct": 8192,
-	"ibm/granite-8b-code-instruct": 8192,
-	// Older / smaller models with limited context
-	"upstage/solar-10.7b-instruct": 4096,
-	"01-ai/yi-large": 32768,
-	"databricks/dbrx-instruct": 32768,
-	"baichuan-inc/baichuan2-13b-chat": 4096,
-	"thudm/chatglm3-6b": 8192,
-	"tiiuae/falcon3-7b-instruct": 8192,
-	"zyphra/zamba2-7b-instruct": 4096,
-	"aisingapore/sea-lion-7b-instruct": 4096,
-	"mediatek/breeze-7b-instruct": 4096,
-	"meta/codellama-70b": 16384,
-	"mistralai/mistral-7b-instruct-v0.2": 32768,
-	"mistralai/mistral-7b-instruct-v0.3": 32768,
-	"nv-mistralai/mistral-nemo-12b-instruct": 131072,
-	"nvidia/nemotron-mini-4b-instruct": 4096,
-	"nvidia/nemotron-4-mini-hindi-4b-instruct": 4096,
-	"nvidia/usdcode-llama-3.1-70b-instruct": 131072,
-	"sarvamai/sarvam-m": 32768,
-	"writer/palmyra-creative-122b": 32768,
-	"writer/palmyra-fin-70b-32k": 32768,
-	"writer/palmyra-med-70b": 8192,
-	"writer/palmyra-med-70b-32k": 32768,
-	"igenius/colosseum_355b_instruct_16k": 16384,
-	"igenius/italia_10b_instruct_16k": 16384,
-	"rakuten/rakutenai-7b-chat": 4096,
-	"rakuten/rakutenai-7b-instruct": 4096,
-};
+// No presaved models: the list comes from the live /v1/models API at session start.
+// No presaved model metadata. Discovery fetches the live NIM model list and enriches it
+// with context/output/capability data from OpenRouter, then caches the result here so the
+// provider exists at the next startup (pi needs >=1 model registered before session_start).
+const MODEL_CACHE_PATH = join(homedir(), ".pi", "agent", "nvidia-nim-models.json");
+const BOOTSTRAP_MODEL_ID = "nvidia/nemotron-3-ultra-550b-a55b";
+const OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models";
+const NON_CHAT_PATTERN =
+	/embed|reward|guard|safety|safeguard|parse|nvclip|clip\b|retriev|riva|vila|neva|deplot|kosmos|fuyu|paligemma|topic-control|streampetr|calibration|detector|translate/i;
 
-// Known max output tokens
-const MAX_TOKENS: Record<string, number> = {
-	"deepseek-ai/deepseek-v3.1": 16384,
-	"deepseek-ai/deepseek-v3.1-terminus": 16384,
-	"deepseek-ai/deepseek-v3.2": 16384,
-	"deepseek-ai/deepseek-v4-flash": 16384,
-	"deepseek-ai/deepseek-v4-pro": 16384,
-	"moonshotai/kimi-k2.6": 16384,
-	"moonshotai/kimi-k2-instruct": 8192,
-	"moonshotai/kimi-k2-thinking": 16384,
-	"minimaxai/minimax-m2": 8192,
-	"minimaxai/minimax-m2.1": 8192,
-	"minimaxai/minimax-m2.7": 8192,
-	[MINIMAX_M3_MODEL_ID]: 16_384,
-	"meta/llama-4-maverick-17b-128e-instruct": 16384,
-	"meta/llama-4-scout-17b-16e-instruct": 16384,
-	"z-ai/glm4.7": 16384,
-	"z-ai/glm5": 16384,
-	"qwen/qwen3-coder-480b-a35b-instruct": 65536,
-	"nvidia/llama-3.1-nemotron-ultra-253b-v1": 32768,
-	"openai/gpt-oss-120b": 16384,
-	"openai/gpt-oss-20b": 16384,
-	"mistralai/mistral-large-3-675b-instruct-2512": 16384,
-	"mistralai/devstral-2-123b-instruct-2512": 32768,
-	[INKLING_MODEL_ID]: 16_384,
-};
+function loadCachedModels(): NimModelEntry[] {
+	try {
+		if (existsSync(MODEL_CACHE_PATH)) {
+			const models = JSON.parse(readFileSync(MODEL_CACHE_PATH, "utf8"));
+			const valid = Array.isArray(models)
+				? models.filter((m) => m && typeof m === "object" && typeof m.id === "string" && typeof m.contextWindow === "number")
+				: [];
+			if (valid.length > 0) return valid as NimModelEntry[];
+		}
+	} catch {}
+	return [buildModelEntry(BOOTSTRAP_MODEL_ID)];
+}
 
-// =============================================================================
-// Curated "featured" models - listed first in the model selector
-// =============================================================================
+function saveCachedModels(models: NimModelEntry[]): void {
+	try {
+		mkdirSync(dirname(MODEL_CACHE_PATH), { recursive: true });
+		writeFileSync(MODEL_CACHE_PATH, JSON.stringify(models));
+	} catch {}
+}
 
-const FEATURED_MODELS = [
-	// Flagship / frontier
-	"deepseek-ai/deepseek-v4-flash",
-	"deepseek-ai/deepseek-v4-pro",
-	"deepseek-ai/deepseek-v3.2",
-	"deepseek-ai/deepseek-v3.1",
-	"deepseek-ai/deepseek-v3.1-terminus",
-	"moonshotai/kimi-k2.6",
-	"moonshotai/kimi-k2-thinking",
-	"moonshotai/kimi-k2-instruct",
-	"moonshotai/kimi-k2-instruct-0905",
-	MINIMAX_M3_MODEL_ID,
-	"minimaxai/minimax-m2.1",
-	"minimaxai/minimax-m2",
-	"minimaxai/minimax-m2.7",
-	"z-ai/glm5",
-	"z-ai/glm4.7",
-	"openai/gpt-oss-120b",
-	"openai/gpt-oss-20b",
-	"stepfun-ai/step-3.5-flash",
-	"bytedance/seed-oss-36b-instruct",
-	INKLING_MODEL_ID,
-	// Qwen
-	"qwen/qwen3-coder-480b-a35b-instruct",
-	"qwen/qwen3-235b-a22b",
-	"qwen/qwen3-next-80b-a3b-instruct",
-	"qwen/qwen3-next-80b-a3b-thinking",
-	"qwen/qwq-32b",
-	"qwen/qwen2.5-coder-32b-instruct",
-	// Meta Llama
-	"meta/llama-4-maverick-17b-128e-instruct",
-	"meta/llama-4-scout-17b-16e-instruct",
-	"meta/llama-3.3-70b-instruct",
-	"meta/llama-3.1-405b-instruct",
-	"meta/llama-3.2-90b-vision-instruct",
-	// Mistral
-	"mistralai/mistral-large-3-675b-instruct-2512",
-	"mistralai/mistral-medium-3-instruct",
-	"mistralai/devstral-2-123b-instruct-2512",
-	"mistralai/magistral-small-2506",
-	"mistralai/mistral-nemotron",
-	// NVIDIA
-	"nvidia/llama-3.1-nemotron-ultra-253b-v1",
-	"nvidia/llama-3.3-nemotron-super-49b-v1.5",
-	"nvidia/llama-3.3-nemotron-super-49b-v1",
-	// DeepSeek R1 distilled
-	"deepseek-ai/deepseek-r1-distill-qwen-32b",
-	"deepseek-ai/deepseek-r1-distill-qwen-14b",
-	// Microsoft Phi
-	"microsoft/phi-4-mini-flash-reasoning",
-	"microsoft/phi-4-mini-instruct",
-	// IBM
-	"ibm/granite-3.3-8b-instruct",
-];
+// -----------------------------------------------------------------------------
+// OpenRouter metadata lookup
+// -----------------------------------------------------------------------------
+
+interface OpenRouterModel {
+	id: string;
+	context_length?: number;
+	top_provider?: { max_completion_tokens?: number | null };
+	architecture?: { input_modalities?: string[] };
+	supported_parameters?: string[];
+}
+
+function modelSlug(id: string): string {
+	return id.split("/").pop()!.toLowerCase().replace(/-(instruct|it|chat)$/, "");
+}
+
+/** Build a lookup that finds the best OpenRouter record for a NIM model id. */
+function buildOpenRouterLookup(models: OpenRouterModel[]): (nimId: string) => OpenRouterModel | undefined {
+	// Merge the plain and ":free" variants of each model, keeping whichever has the larger
+	// context window. Other variants (":batch", "~alias") are ignored.
+	const merged = new Map<string, OpenRouterModel>();
+	for (const m of models) {
+		if (m.id.startsWith("~") || (m.id.includes(":") && !m.id.endsWith(":free"))) continue;
+		const key = m.id.replace(/:free$/, "");
+		const current = merged.get(key);
+		if (!current || (m.context_length ?? 0) > (current.context_length ?? 0)) merged.set(key, { ...m, id: key });
+	}
+	const base = Array.from(merged.values());
+	const byId = new Map(base.map((m) => [m.id.toLowerCase(), m]));
+	const bySlug = new Map<string, OpenRouterModel>();
+	for (const m of base) if (!bySlug.has(modelSlug(m.id))) bySlug.set(modelSlug(m.id), m);
+	return (nimId) => {
+		const exact = byId.get(nimId.toLowerCase());
+		if (exact) return exact;
+		const slug = modelSlug(nimId);
+		const sameSlug = bySlug.get(slug);
+		if (sameSlug) return sameSlug;
+		// OpenRouter often drops size suffixes (nemotron-3.5-lightning vs ...-30b-a3b):
+		// accept the longest OpenRouter slug that is a prefix of the NIM slug at a "-" boundary.
+		let best: OpenRouterModel | undefined;
+		let bestLen = 0;
+		for (const [orSlug, m] of bySlug) {
+			if (slug.startsWith(`${orSlug}-`) && orSlug.length > bestLen && orSlug.length >= 8) {
+				best = m;
+				bestLen = orSlug.length;
+			}
+		}
+		return best;
+	};
+}
+
+async function fetchOpenRouterModels(): Promise<OpenRouterModel[]> {
+	try {
+		const response = await fetch(OPENROUTER_MODELS_URL, {
+			headers: { Accept: "application/json" },
+			signal: AbortSignal.timeout(15000),
+		});
+		if (!response.ok) return [];
+		const data = (await response.json()) as { data?: OpenRouterModel[] };
+		return Array.isArray(data.data) ? data.data : [];
+	} catch {
+		return [];
+	}
+}
+
 
 // =============================================================================
 // Custom streaming - wraps standard openai-completions with NIM-specific fixes
@@ -709,13 +536,13 @@ function makeDisplayName(modelId: string): string {
 		.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-function buildModelEntry(modelId: string): NimModelEntry | null {
-	if (SKIP_MODELS.has(modelId)) return null;
-
-	const isReasoning = REASONING_MODELS.has(modelId);
-	const isVision = VISION_MODELS.has(modelId);
-	const contextWindow = CONTEXT_WINDOWS[modelId] ?? 4096;
-	const maxTokens = MAX_TOKENS[modelId] ?? Math.min(2048, contextWindow);
+function buildModelEntry(modelId: string, meta?: OpenRouterModel): NimModelEntry {
+	const isReasoning = REASONING_MODELS.has(modelId) || !!meta?.supported_parameters?.includes("reasoning");
+	const isVision = VISION_MODELS.has(modelId) || !!meta?.architecture?.input_modalities?.includes("image");
+	// Unmatched models: honor a "-32k"/"-128k"/"8k" size hint in the id, else assume 128K.
+	const idHint = modelId.match(/(?:^|[-_/])(\d+)k(?:$|[-_])/i);
+	const contextWindow = meta?.context_length || (idHint ? Number(idHint[1]) * 1024 : 131072);
+	const maxTokens = Math.min(meta?.top_provider?.max_completion_tokens || 16384, 32768, contextWindow);
 
 	const entry: NimModelEntry = {
 		id: modelId,
@@ -849,6 +676,94 @@ async function fetchNimModels(apiKey: string): Promise<NimModelFetchResult> {
 	}
 }
 
+// -----------------------------------------------------------------------------
+// Liveness check
+// -----------------------------------------------------------------------------
+// NVIDIA's /v1/models list includes plenty of models that 410 (end-of-life) or
+// 404 (not entitled on this account) on an actual chat completion. Before
+// trusting a model, send it a minimal request and only keep it if NIM answers
+// with 200.
+
+const LIVENESS_CONCURRENCY = 8;
+const LIVENESS_TIMEOUT_MS = 20000;
+// NVIDIA's free tier returns 503 "Service temporarily overloaded" on some models
+// fairly often even when the model is fine - a single retry isn't enough to tell
+// genuinely dead models apart from ones that are just momentarily busy.
+const LIVENESS_TRANSIENT_RETRIES = 4;
+const LIVENESS_RETRY_DELAY_MS = 1500;
+// Hard cap on the whole sweep, so a handful of slow/hanging models can't keep the
+// pi process (and, in `-p` mode, its exit) lingering for minutes. Past this point
+// in-flight requests are aborted and anything not yet confirmed alive is dropped
+// for this round - it gets re-tested next session.
+const LIVENESS_BUDGET_MS = 45000;
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+	const results: R[] = new Array(items.length);
+	let next = 0;
+	async function worker() {
+		for (;;) {
+			const i = next++;
+			if (i >= items.length) return;
+			results[i] = await fn(items[i]);
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+	return results;
+}
+
+async function isNimModelAlive(modelId: string, apiKey: string, budgetSignal: AbortSignal): Promise<boolean> {
+	// Retry transient failures (429/5xx/network/timeout) several times with a short
+	// delay - NVIDIA's free tier returns 503 on perfectly good models under load. A
+	// 4xx other than 429 (400, 401, 403, 404, 410, ...) means the model itself is
+	// unusable, so there's no point retrying that.
+	for (let attempt = 0; attempt <= LIVENESS_TRANSIENT_RETRIES; attempt++) {
+		if (budgetSignal.aborted) return false;
+		try {
+			const response = await fetch(`${NVIDIA_NIM_BASE_URL}/chat/completions`, {
+				method: "POST",
+				headers: {
+					Authorization: `Bearer ${apiKey}`,
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					model: modelId,
+					messages: [{ role: "user", content: "hi" }],
+					max_tokens: 1,
+				}),
+				// Whichever fires first: this request's own timeout, or the sweep's
+				// overall time budget running out.
+				signal: AbortSignal.any([budgetSignal, AbortSignal.timeout(LIVENESS_TIMEOUT_MS)]),
+			});
+			if (response.ok) return true;
+			if (response.status !== 429 && response.status < 500) return false;
+			// else: transient, fall through to retry
+		} catch {
+			// network error, timeout, or budget abort: fall through (the budget
+			// check at the top of the next iteration catches the abort case)
+		}
+		if (attempt < LIVENESS_TRANSIENT_RETRIES && !budgetSignal.aborted) await delay(LIVENESS_RETRY_DELAY_MS);
+	}
+	return false;
+}
+
+/** Filters `models` down to the ones that actually answer a request on NIM right now. */
+async function filterToLiveModels(models: NimModelEntry[], apiKey: string): Promise<NimModelEntry[]> {
+	const budget = new AbortController();
+	const budgetTimer = setTimeout(() => budget.abort(), LIVENESS_BUDGET_MS);
+	try {
+		const alive = await mapWithConcurrency(models, LIVENESS_CONCURRENCY, (m) =>
+			isNimModelAlive(m.id, apiKey, budget.signal),
+		);
+		return models.filter((_, i) => alive[i]);
+	} finally {
+		clearTimeout(budgetTimer);
+	}
+}
+
 // =============================================================================
 // Extension Entry Point
 // =============================================================================
@@ -856,39 +771,24 @@ async function fetchNimModels(apiKey: string): Promise<NimModelFetchResult> {
 export default function (pi: ExtensionAPI) {
 	const providerApiKeyConfig = getNimProviderApiKeyConfig();
 
-	// Always register the curated model list. The request path resolves credentials
-	// through pi first (CLI override, auth.json, shell command), then falls back to
-	// NVIDIA_NIM_API_KEY/NVIDIA_API_KEY. This keeps models available even when pi
-	// was launched by a shell that did not source ~/.bashrc or ~/.zshrc.
-
-	// Build the curated model list
-	const modelMap = new Map<string, NimModelEntry>();
-
-	// Add featured models first (preserves order in selector)
-	for (const id of FEATURED_MODELS) {
-		const entry = buildModelEntry(id);
-		if (entry) modelMap.set(id, entry);
-	}
-
-	// Register with curated models immediately
-	const curatedModels = Array.from(modelMap.values());
-
+	// Register cached models immediately. The request path resolves credentials through
+	// pi first (CLI override, auth.json, shell command), then falls back to
+	// NVIDIA_NIM_API_KEY/NVIDIA_API_KEY.
 	pi.registerProvider(PROVIDER_NAME, {
 		baseUrl: NVIDIA_NIM_BASE_URL,
 		apiKey: providerApiKeyConfig,
 		api: "openai-completions",
 		authHeader: true,
-		models: curatedModels,
+		models: loadCachedModels(),
 		streamSimple: nimStreamSimple,
 	});
 
-	// On session start, discover additional models from the API
+	// On session start, refresh the model list from NIM and metadata from OpenRouter.
 	pi.on("session_start", async (_event, ctx) => {
 		const apiKey = await resolveNimDiscoveryApiKey(ctx);
 		if (!apiKey) return;
 
-		// Fetch live model list
-		const fetchResult = await fetchNimModels(apiKey);
+		const [fetchResult, openRouterModels] = await Promise.all([fetchNimModels(apiKey), fetchOpenRouterModels()]);
 		if (!fetchResult.ok) {
 			if (fetchResult.reason === "auth") {
 				notifyNimDiscoveryCredentialWarning(ctx);
@@ -896,31 +796,47 @@ export default function (pi: ExtensionAPI) {
 			return;
 		}
 
-		const liveModelIds = fetchResult.modelIds;
-		if (liveModelIds.length === 0) return;
+		const chatIds = fetchResult.modelIds.filter((id) => !NON_CHAT_PATTERN.test(id));
+		if (chatIds.length === 0) return;
 
-		let newModelsAdded = 0;
-		for (const id of liveModelIds) {
-			if (modelMap.has(id)) continue;
-			const entry = buildModelEntry(id);
-			if (entry) {
-				modelMap.set(id, entry);
-				newModelsAdded++;
+		const lookup = buildOpenRouterLookup(openRouterModels);
+		// If OpenRouter is unreachable, keep whatever metadata we cached earlier.
+		const previous = new Map(loadCachedModels().map((m) => [m.id, m]));
+		const candidates = chatIds.map((id) => {
+			const meta = lookup(id);
+			if (!meta && openRouterModels.length === 0 && previous.has(id)) return previous.get(id)!;
+			return buildModelEntry(id, meta);
+		});
+
+		// Drop anything that doesn't actually answer right now (EOL/410, not
+		// entitled/404, etc.). This sweep can take a while across many candidates
+		// (retries on top of per-request timeouts), so it must not hold up pi's
+		// startup - don't await it here. pi already has cached/previous models
+		// registered above; swap in the validated list whenever the sweep finishes.
+		void filterToLiveModels(candidates, apiKey).then((models) => {
+			// If every single model fails the check - e.g. the key just got
+			// revoked - that's more likely a systemic problem than every model
+			// going down at once, so keep the existing cache instead of wiping it.
+			if (models.length === 0) return;
+
+			saveCachedModels(models);
+			try {
+				// The sweep can easily outlive a short-lived (-p) session, or run
+				// past a session reload/fork/switch in an interactive one. pi's
+				// extension ctx throws if used after that, which would otherwise
+				// surface as an unhandled rejection - there's simply nothing left
+				// to register against, so just drop the update.
+				pi.registerProvider(PROVIDER_NAME, {
+					baseUrl: NVIDIA_NIM_BASE_URL,
+					apiKey: getNimProviderApiKeyConfig(),
+					api: "openai-completions",
+					authHeader: true,
+					models,
+					streamSimple: nimStreamSimple,
+				});
+			} catch {
+				// Session ended or was replaced before the sweep finished - nothing to update.
 			}
-		}
-
-		// Runtime provider registrations now apply immediately through the extension API.
-		if (newModelsAdded > 0) {
-			const allModels = Array.from(modelMap.values());
-			pi.registerProvider(PROVIDER_NAME, {
-				baseUrl: NVIDIA_NIM_BASE_URL,
-				apiKey: getNimProviderApiKeyConfig(),
-				api: "openai-completions",
-				authHeader: true,
-				models: allModels,
-				streamSimple: nimStreamSimple,
-			});
-		}
+		});
 	});
-
 }
